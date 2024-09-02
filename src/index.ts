@@ -1,5 +1,5 @@
-import { EditorState } from "prosemirror-state";
-import { EditorView } from "prosemirror-view";
+import { EditorState, Plugin } from "prosemirror-state";
+import { EditorView, Decoration, DecorationSet } from "prosemirror-view";
 import { Schema, DOMParser } from "prosemirror-model";
 import { schema } from "prosemirror-schema-basic";
 import { addListNodes } from "prosemirror-schema-list";
@@ -15,6 +15,49 @@ import { lorem } from "./lorem";
  * - collaboration support
  */
 
+let specklePlugin = new Plugin({
+  state: {
+    init(_, { doc }) {
+      console.log(doc);
+      let top_level_node_decs: Decoration[] = [];
+      let fragment = doc.content;
+      let map = new Map();
+      fragment.forEach((node, offset, i) => {
+        let dec = Decoration.node(offset, offset + node.nodeSize, {
+          style: "background: yellow",
+        });
+        console.log(i, offset, node, node.nodeSize);
+        top_level_node_decs.push(dec);
+        map.set(node, dec);
+      });
+      let set = DecorationSet.create(doc, top_level_node_decs);
+      return { set, map };
+    },
+    apply(tr, { set, map }) {
+      console.log("APPLY=============", tr.doc, set);
+      let top_level_node_decs: Decoration[] = [];
+      let fragment = tr.doc.content;
+      let new_set = set.map(tr.mapping, tr.doc);
+      fragment.forEach((node, offset, i) => {
+        if (!map.has(node)) {
+          let dec = Decoration.node(offset, offset + node.nodeSize, {
+            style: "background: yellow",
+          });
+          console.log(i, offset, node, node.nodeSize);
+          top_level_node_decs.push(dec);
+          map.set(node, dec);
+        }
+      });
+      return { set: new_set.add(tr.doc, top_level_node_decs), map };
+    },
+  },
+  props: {
+    decorations(state) {
+      return specklePlugin.getState(state).set;
+    },
+  },
+});
+
 // Mix the nodes from prosemirror-schema-list into the basic schema to
 // create a schema with list support.
 const mySchema = new Schema({
@@ -27,7 +70,7 @@ let view = new EditorView(document.querySelector("#editor"), {
     doc: DOMParser.fromSchema(mySchema).parse(
       document.querySelector("#content")
     ),
-    plugins: exampleSetup({ schema: mySchema }),
+    plugins: exampleSetup({ schema: mySchema, plugins: [specklePlugin] }),
   }),
 });
 window.view = view;

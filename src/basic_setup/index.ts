@@ -57,13 +57,17 @@ export function exampleSetup(options: {
 
   /// Can be used to override the menu content.
   menuContent?: MenuElement[][]
+
+  /// Any additional plugins.
+  plugins?: Plugin[]
 }) {
   let plugins = [
     buildInputRules(options.schema),
     keymap(buildKeymap(options.schema, options.mapKeys)),
     keymap(baseKeymap),
     dropCursor(),
-    gapCursor()
+    gapCursor(),
+    ...(options.plugins || [])
   ]
   if (options.menuBar !== false)
     plugins.push(menuBar({floating: options.floatingMenu !== false,
