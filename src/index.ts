@@ -1,6 +1,6 @@
 import { EditorState, Plugin } from "prosemirror-state";
 import { EditorView, Decoration, DecorationSet } from "prosemirror-view";
-import { Schema, DOMParser } from "prosemirror-model";
+import { Schema, Fragment, DOMParser } from "prosemirror-model";
 import { schema } from "prosemirror-schema-basic";
 import { addListNodes } from "prosemirror-schema-list";
 import { exampleSetup } from "./basic_setup/index";
@@ -60,20 +60,42 @@ let specklePlugin = new Plugin({
 
 // Mix the nodes from prosemirror-schema-list into the basic schema to
 // create a schema with list support.
-const mySchema = new Schema({
+const my_schema = new Schema({
   nodes: addListNodes(schema.spec.nodes, "paragraph block*", "block"),
   marks: schema.spec.marks,
 });
 
 let view = new EditorView(document.querySelector("#editor"), {
   state: EditorState.create({
-    doc: DOMParser.fromSchema(mySchema).parse(
+    doc: DOMParser.fromSchema(my_schema).parse(
       document.querySelector("#content")
     ),
-    plugins: exampleSetup({ schema: mySchema, plugins: [specklePlugin] }),
+    plugins: exampleSetup({ schema: my_schema, plugins: [specklePlugin] }),
   }),
 });
 window.view = view;
+
+function insert_node(node, from, to?) {
+  if (to === undefined) to = from;
+  const { state, dispatch } = view;
+  // Create a transaction to replace the current selection with the new node
+  let transaction = state.tr.replaceWith(from, to, node);
+  // Dispatch the transaction to update the editor state
+  dispatch(transaction);
+}
+
+function insert_node_at_selection(node) {
+  const { state } = view;
+  const { selection } = state;
+  const { from, to } = selection;
+  insert_node(node, from, to);
+}
+
+function insert_node_at_end(node) {
+  const { state } = view;
+  let end = state.doc.content.size;
+  insert_node(node, end, end);
+}
 
 function insert_text(text, from, to?) {
   if (to === undefined) to = from;
@@ -94,17 +116,21 @@ function insert_text_at_selection(text) {
 function insert_text_at_end(text) {
   const { state } = view;
   let end = state.doc.content.size;
-  console.log("end");
   insert_text(text, end, end);
 }
 
+function text_to_paragraph_nodes(text: string) {
+  let para_strings = text.split(/\n{2,}/);
+  let paras = para_strings.map((p) =>
+    my_schema.nodes.paragraph.create(null, my_schema.text(text))
+  );
+  return paras;
+}
+
 function insert_lorem_ipsum(n: number) {
-  let text = lorem(n).join("\n\n");
-  const { state } = view;
-  const { selection } = state;
-  console.log(selection);
-  if (view.hasFocus()) insert_text_at_selection(text);
-  else insert_text_at_end(text);
+  let paras = lorem(n).flatMap((text) => text_to_paragraph_nodes(text));
+  if (view.hasFocus()) insert_node_at_selection(Fragment.from(paras));
+  else insert_node_at_end(Fragment.from(paras));
 }
 
 function create_lorem_button(n: number) {
