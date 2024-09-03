@@ -10,28 +10,48 @@
   <body>
     <div id="page_controls"></div>
     <hr />
-    <div id="root"></div>
+    <div id="root" style="margin-bottom: 100px;"></div>
 
     <div style="display: none" id="content">
       <h3>Hello ProseMirror</h3>
-      <p>This is editable text. You can focus it and start typing.</p>
       <p>
-        To apply styling, you can select a piece of text and manipulate its
-        styling from the menu. The basic schema supports <em>emphasis</em>,
-        <strong>strong text</strong>,
-        <a href="http://marijnhaverbeke.nl/blog">links</a>,
-        <code>code font</code>, and <img src="/img/smiley.png" /> images.
+        Use <code>Mod-y</code> to add a highlight <strong>decoration</strong> at
+        the selection range. This is very WIP, but you could use decorations
+        like this to support all sorts of document annotations (eg, comments).
       </p>
       <p>
-        Block-level structure can be manipulated with key bindings (try
-        ctrl-shift-2 to create a level 2 heading, or enter in an empty textblock
-        to exit the parent block), or through the menu.
+        Use the <code>Lorem</code> buttons to insert some sample paragraphs. If
+        there is an active selection, the inserted paragraph(s) will replace it.
+        Otherwise, the insertion will be appended to the end of the document.
       </p>
       <p>
-        Try using the “list” item in the menu to wrap this paragraph in a
-        numbered list.
+        Use the <code>Disconnect</code> button to simulate a network partition
+        in the sync engine simulator.
+      </p>
+      <p>
+        Use the <code>Add Editor</code> button at the top of the page to add
+        another editor.
+      </p>
+      <p>
+        This demo adds a decoration to every top-level node. Notice the numbers
+        at the start of each paragraph. They are managed in a virtualized window
+        that should cover the viewport. This is useful for large documents. This
+        window updates on every interaction with the editor and on every scroll
+        action. If you wish to turn the updates off during scrolling, use the
+        corresponding button at the top of the page. Turning off the updates
+        during scrolling will allow you to scroll the edge of the virtualized
+        decoration window if you use a sufficiently large document.
+      </p>
+      <p>
+        Be advised: Chrome has a performance bug in
+        <code>contenteditable</code> divs of moderate size. ProseMirror makes
+        use <code>contenteditable</code> and experiences the bug, but it is not
+        a ProseMirror-specific issue. For better performance on large documents,
+        use Safari or Firefox. Use the <code>Lorem 10000</code> button to get a
+        document of moderate size.
       </p>
     </div>
+
     <script src="/src/index.ts" type="module"></script>
   </body>
 </html>

@@ -23,7 +23,18 @@ const schema = new Schema({
 
 const META_TOP_LEVEL_DEC = "meta_top_level_dec";
 const META_EPHEMERAL = "meta_ephemeral";
-const META_HIGHLIGHT = "meta_highlight";
+
+/*==============================================================================
+Sync Simulation
+
+There's a single Authority that coordinates the editors. Each editor connects to
+a SyncSimulator, which manages the simulation of the connected/disconnected
+state. It all relies on prosemirror-collab for the hairy stuff.
+
+This is just a simple, synchronous, in-process thing. I didn't want to deal
+with the boilerplate of a server. But it wouldn't be hard to add the
+serialization/deserialization and make the interactions async.
+==============================================================================*/
 
 class Authority {
   doc: any;
@@ -60,19 +71,74 @@ class Authority {
   }
 }
 const authority = new Authority(
-  DOMParser.fromSchema(schema).parse(document.querySelector("#content"))
+  DOMParser.fromSchema(schema).parse(document.querySelector("#content")!)
 );
 
-// Get the first stylesheet in the document
-const sheet = document.styleSheets[0];
-// Insert a new rule into the stylesheet
-sheet.insertRule(
-  ".top_level_dec::before { content: attr(data-top_level_dec_count); color: red; }",
-  sheet.cssRules.length
-);
+class SyncSimulator {
+  view: EditorView;
+  connected: boolean;
+  on_new_steps: any;
+  constructor(view) {
+    this.view = view;
+    this.connected = false;
+    this.on_new_steps = function () {
+      if (this.connected) {
+        let newData = authority.steps_since(getVersion(view.state));
+        view.dispatch(
+          receiveTransaction(view.state, newData.steps, newData.clientIDs)
+        );
+      }
+    };
+    this.on_new_steps = this.on_new_steps.bind(this);
+  }
+  start() {
+    this.view.state.doc = authority.doc;
+    this.connect();
+  }
+  connect() {
+    this.connected = true;
+    this.on_new_steps();
+    authority.on_new_steps.push(this.on_new_steps);
+    this.send_steps(this.view.state);
+  }
+  disconnect() {
+    this.connected = false;
+  }
+  send_steps(state) {
+    if (this.connected) {
+      let sendable = sendableSteps(state);
+      if (sendable)
+        authority.receive_steps(
+          sendable.version,
+          sendable.steps,
+          sendable.clientID
+        );
+    }
+  }
+}
+
+/*==============================================================================
+Highlight Decorations Plugin
+
+First pass at using decorations for styling. In this case, we use it to
+highlight a range of content. Unlike relying solely on marks, if a user enters
+content between blocks but in the midst of a decoration range, the newly
+entered content will also be appropriately styled.
+
+However, this is very WIP. Consolidating overlapping highlights and other
+user-friendly niceties have not been implemented.
+
+Step must be extended in order for the decorations to sync, as Transforms
+with Steps sync automatically with prosemirror-collab, but other Transforms do
+not.
+
+It's easy to see how comments and other annotations could be implemented with
+such an approach. I didn't do that here because I didn't want to mess with all
+the other UI necessary to make comments usable.
+==============================================================================*/
 
 // Custom Step to carry decoration information
-class DecorationStep extends Step {
+class HighlightDecorationStep extends Step {
   from: number;
   to: number;
   attrs: any;
@@ -88,11 +154,11 @@ class DecorationStep extends Step {
   }
   invert() {
     // Return the inverse of this step (optional)
-    return new DecorationStep(this.from, this.to, this.attrs);
+    return new HighlightDecorationStep(this.from, this.to, this.attrs);
   }
   map(mapping) {
     // Map the step's position through a Mapping
-    return new DecorationStep(
+    return new HighlightDecorationStep(
       mapping.map(this.from),
       mapping.map(this.to),
       this.attrs
@@ -107,13 +173,79 @@ class DecorationStep extends Step {
     };
   }
   static fromJSON(schema, json) {
-    return new DecorationStep(json.from, json.to, json.attrs);
+    return new HighlightDecorationStep(json.from, json.to, json.attrs);
   }
 }
 
 // Register the custom step type with a step name
-Step.jsonID("decoration", DecorationStep);
+Step.jsonID("highlight_decoration", HighlightDecorationStep);
 
+let highlight_plugin = new Plugin({
+  state: {
+    init(_, { doc }) {
+      return DecorationSet.create(doc, []);
+    },
+    apply(tr, decorations) {
+      tr.steps.forEach((step) => {
+        if (step instanceof HighlightDecorationStep) {
+          decorations = decorations.add(tr.doc, [
+            Decoration.inline(step.from, step.to, {
+              style: `background: ${step.attrs.color}`,
+            }),
+          ]);
+        }
+      });
+      return decorations.map(tr.mapping, tr.doc);
+    },
+  },
+  props: {
+    decorations(state) {
+      return highlight_plugin.getState(state);
+    },
+  },
+});
+
+function insert_highlight_at_selection(state, dispatch, color) {
+  const { selection } = state;
+  const { from, to } = selection;
+  let tr = state.tr;
+  tr.step(new HighlightDecorationStep(from, to, { color }));
+  dispatch(tr);
+}
+
+/*==============================================================================
+Top-level Node Decorations Plugin
+
+This was just a little experiment in virtualizing a lot of decorations (for
+performance reasons, ostensibly). Each top-level node within a virtual window
+gets an decoration.
+
+The basic approach is to use something like binary_search to find a single node
+in the viewport (getBoundingClientRect is expensive). Then we just add some
+padding either side of this node. The padding is a number of nodes, not a number
+of pixels. All nodes in that window get the decoration. Others do not.
+
+We update the window on every interaction with the editor. In the `Setup Page`
+section, we also add listeners to the browser window to update our decoration
+window on every scroll event. Seems fast enough just doing it this very naive
+way.
+==============================================================================*/
+
+const VIRTUAL_WINDOW_PADDING_SIZE = 20;
+
+// Get the first stylesheet in the document
+const sheet = document.styleSheets[0];
+// Insert a new rule into the stylesheet
+sheet.insertRule(
+  ".top_level_dec::before { content: attr(data-top_level_dec_count); color: red; }",
+  sheet.cssRules.length
+);
+
+/**
+ * We only care about Y axis.
+ *
+ * @returns 0 if in viewport, -1 if above, 1 if below
+ */
 function is_dom_in_viewport(el) {
   const rect = el.getBoundingClientRect();
   if (rect.bottom < 0) return -1;
@@ -163,7 +295,12 @@ function binary_search(
   return -1;
 }
 
-function get_virtual_list_window(view, doc: Node, mapping, buffer = 20) {
+function get_virtual_list_window(
+  view,
+  doc: Node,
+  mapping,
+  buffer = VIRTUAL_WINDOW_PADDING_SIZE
+) {
   let frag = doc.content;
   let data: { node: Node; offset: number; idx: number }[] = [];
   frag.forEach((node, offset, idx) => {
@@ -201,94 +338,25 @@ function update_top_level_node_decs(view) {
   dispatch(tx);
 }
 
-class SyncSimulator {
-  view: EditorView;
-  connected: boolean;
-  on_new_steps: any;
-  constructor(view) {
-    this.view = view;
-    this.connected = false;
-    this.on_new_steps = function () {
-      if (this.connected) {
-        let newData = authority.steps_since(getVersion(view.state));
-        view.dispatch(
-          receiveTransaction(view.state, newData.steps, newData.clientIDs)
-        );
-      }
-    };
-    this.on_new_steps = this.on_new_steps.bind(this);
-  }
-  start() {
-    this.view.state.doc = authority.doc;
-    this.connect();
-  }
-  connect() {
-    this.connected = true;
-    this.on_new_steps();
-    authority.on_new_steps.push(this.on_new_steps);
-    this.send_steps(this.view.state);
-  }
-  disconnect() {
-    this.connected = false;
-  }
-  send_steps(state) {
-    if (this.connected) {
-      let sendable = sendableSteps(state);
-      if (sendable)
-        authority.receive_steps(
-          sendable.version,
-          sendable.steps,
-          sendable.clientID
-        );
-    }
-  }
-}
-
-function setup_editor(root) {
-  let highlight_plugin = new Plugin({
-    state: {
-      init(_, { doc }) {
-        return DecorationSet.create(doc, []);
-      },
-      apply(tr, decorations) {
-        console.log("apply?", decorations, tr);
-        tr.steps.forEach((step) => {
-          if (step instanceof DecorationStep) {
-            decorations = decorations.add(tr.doc, [
-              Decoration.inline(step.from, step.to, {
-                style: `background: ${step.attrs.color}`,
-              }),
-            ]);
-          }
-        });
-        return decorations.map(tr.mapping, tr.doc);
-      },
-    },
-    props: {
-      decorations(state) {
-        return highlight_plugin.getState(state);
-      },
-    },
-  });
-
+function get_top_level_node_plugin(view_box: { view: EditorView }) {
   let top_level_node_plugin = new Plugin({
     state: {
       init(_, { doc }) {
         let set = DecorationSet.create(doc, []);
         setTimeout(() => {
-          update_top_level_node_decs(view);
+          update_top_level_node_decs(view_box.view);
         }, 0);
         return set;
       },
       apply(tr, set) {
         if (!tr.getMeta(META_TOP_LEVEL_DEC)) {
           setTimeout(() => {
-            update_top_level_node_decs(view);
+            update_top_level_node_decs(view_box.view);
           }, 0);
           return set;
         }
         let { start, end, data } = get_virtual_list_window(
-          view,
+          view_box.view,
           tr.doc,
           tr.mapping.invert()
         );
@@ -298,7 +366,6 @@ function setup_editor(root) {
           let count = i;
           let { node, offset } = data[i];
           let dec = Decoration.node(offset, offset + node.nodeSize, {
-            // style: "background: yellow",
             class: "top_level_dec",
             "data-top_level_dec_count": count + "",
           });
@@ -313,7 +380,19 @@ function setup_editor(root) {
       },
     },
   });
+  return top_level_node_plugin;
+}
 
+/*==============================================================================
+Setup Editors
+
+This just defines our editor setup code (plugins, keymaps, SyncSimulator, etc.)
+along with our per-editor buttons. The per-editor buttons are used to manage
+connected/disconnected state with respect to our sync simulation as well as
+provide some helpers for inserting Lorem Ipsum text.
+==============================================================================*/
+
+function setup_editor(root) {
   let root_element = document.querySelector(root);
   let editor_container = document.createElement("div");
   root_element.appendChild(editor_container);
@@ -324,6 +403,9 @@ function setup_editor(root) {
   editor_container.appendChild(controls);
   editor_container.appendChild(editor);
 
+  /* We use the view_box so that we can slip the view to plugins that need it */
+  let view_box: { view: EditorView } = { view: null as unknown as EditorView };
+
   let view = new EditorView(editor, {
     state: EditorState.create({
       doc: schema.nodes.doc.createAndFill() as Node,
@@ -331,12 +413,11 @@ function setup_editor(root) {
         ...exampleSetup({
           schema: schema,
         }),
-        top_level_node_plugin,
+        get_top_level_node_plugin(view_box),
         highlight_plugin,
         collab({ version: 0 }),
         keymap({
           "Mod-y": (state, dispatch, view) => {
-            console.log("HIGH", dispatch);
             if (!dispatch) return true;
             insert_highlight_at_selection(state, dispatch, "yellow");
             return true;
@@ -350,6 +431,7 @@ function setup_editor(root) {
       sync_simulator.send_steps(newState);
     },
   });
+  view_box.view = view;
 
   let sync_simulator = new SyncSimulator(view);
   sync_simulator.start();
@@ -402,36 +484,6 @@ function insert_node_at_end(view, node) {
   insert_node(view, node, end, end);
 }
 
-function insert_text(view, text, from, to?) {
-  if (to === undefined) to = from;
-  const { state, dispatch } = view;
-  // Create a transaction to insert text at the current selection
-  const transaction = state.tr.insertText(text, from, to);
-  // Dispatch the transaction to update the editor state
-  dispatch(transaction);
-}
-
-function insert_text_at_selection(view, text) {
-  const { state } = view;
-  const { selection } = state;
-  const { from, to } = selection;
-  insert_text(view, text, from, to);
-}
-
-function insert_text_at_end(view, text) {
-  const { state } = view;
-  let end = state.doc.content.size;
-  insert_text(view, text, end, end);
-}
-
-function insert_highlight_at_selection(state, dispatch, color) {
-  const { selection } = state;
-  const { from, to } = selection;
-  let tr = state.tr;
-  tr.step(new DecorationStep(from, to, { color }));
-  dispatch(tr);
-}
-
 function text_to_paragraph_nodes(text: string) {
   let para_strings = text.split(/\n{2,}/);
   let paras = para_strings.map((p) =>
@@ -455,6 +507,16 @@ function create_lorem_button(view, controls_container, n: number) {
   });
   controls_container?.appendChild(lorem_button);
 }
+
+/*==============================================================================
+Setup Page
+
+- sets up 2 editors
+- keeps a list of views
+- adds a button for adding editors
+- adds a window listener to update our virtualized decorations window
+- adds a button for toggling off the listener
+==============================================================================*/
 
 let views = [setup_editor("#root"), setup_editor("#root")];
 
