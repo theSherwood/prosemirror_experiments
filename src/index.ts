@@ -9,8 +9,10 @@ import {
   receiveTransaction,
   getVersion,
 } from "prosemirror-collab";
+import { Step, StepResult } from "prosemirror-transform";
 import { exampleSetup } from "./basic_setup/index";
 import { lorem } from "./lorem";
+import { keymap } from "prosemirror-keymap";
 
 // Mix the nodes from prosemirror-schema-list into the basic schema to
 // create a schema with list support.
@@ -21,6 +23,7 @@ const schema = new Schema({
 
 const META_TOP_LEVEL_DEC = "meta_top_level_dec";
 const META_EPHEMERAL = "meta_ephemeral";
+const META_HIGHLIGHT = "meta_highlight";
 
 class Authority {
   doc: any;
@@ -67,6 +70,49 @@ sheet.insertRule(
   ".top_level_dec::before { content: attr(data-top_level_dec_count); color: red; }",
   sheet.cssRules.length
 );
+
+// Custom Step to carry decoration information
+class DecorationStep extends Step {
+  from: number;
+  to: number;
+  attrs: any;
+  constructor(from, to, attrs) {
+    super();
+    this.from = from;
+    this.to = to;
+    this.attrs = attrs; // Custom attributes to describe the decoration
+  }
+  apply(doc) {
+    // This step doesn't modify the document content
+    return StepResult.ok(doc);
+  }
+  invert() {
+    // Return the inverse of this step (optional)
+    return new DecorationStep(this.from, this.to, this.attrs);
+  }
+  map(mapping) {
+    // Map the step's position through a Mapping
+    return new DecorationStep(
+      mapping.map(this.from),
+      mapping.map(this.to),
+      this.attrs
+    );
+  }
+  toJSON() {
+    return {
+      stepType: "decoration",
+      from: this.from,
+      to: this.to,
+      attrs: this.attrs,
+    };
+  }
+  static fromJSON(schema, json) {
+    return new DecorationStep(json.from, json.to, json.attrs);
+  }
+}
+
+// Register the custom step type with a step name
+Step.jsonID("decoration", DecorationStep);
 
 function is_dom_in_viewport(el) {
   const rect = el.getBoundingClientRect();
@@ -199,11 +245,36 @@ class SyncSimulator {
 }
 
 function setup_editor(root) {
+  let highlight_plugin = new Plugin({
+    state: {
+      init(_, { doc }) {
+        return DecorationSet.create(doc, []);
+      },
+      apply(tr, decorations) {
+        console.log("apply?", decorations, tr);
+        tr.steps.forEach((step) => {
+          if (step instanceof DecorationStep) {
+            decorations = decorations.add(tr.doc, [
+              Decoration.inline(step.from, step.to, {
+                style: `background: ${step.attrs.color}`,
+              }),
+            ]);
+          }
+        });
+        return decorations.map(tr.mapping, tr.doc);
+      },
+    },
+    props: {
+      decorations(state) {
+        return highlight_plugin.getState(state);
+      },
+    },
+  });
+
   let top_level_node_plugin = new Plugin({
     state: {
       init(_, { doc }) {
-        let top_level_node_decs: Decoration[] = [];
-        let set = DecorationSet.create(doc, top_level_node_decs);
+        let set = DecorationSet.create(doc, []);
         setTimeout(() => {
           update_top_level_node_decs(view);
         }, 0);
@@ -261,7 +332,16 @@ function setup_editor(root) {
           schema: schema,
         }),
         top_level_node_plugin,
+        highlight_plugin,
         collab({ version: 0 }),
+        keymap({
+          "Mod-y": (state, dispatch, view) => {
+            console.log("HIGH", dispatch);
+            if (!dispatch) return true;
+            insert_highlight_at_selection(state, dispatch, "yellow");
+            return true;
+          },
+        }),
       ],
     }),
     dispatchTransaction(transaction) {
@@ -342,6 +422,14 @@ function insert_text_at_end(view, text) {
   const { state } = view;
   let end = state.doc.content.size;
   insert_text(view, text, end, end);
+}
+
+function insert_highlight_at_selection(state, dispatch, color) {
+  const { selection } = state;
+  const { from, to } = selection;
+  let tr = state.tr;
+  tr.step(new DecorationStep(from, to, { color }));
+  dispatch(tr);
 }
 
 function text_to_paragraph_nodes(text: string) {

@@ -40,7 +40,8 @@
     "prosemirror-menu": "^1.0.0",
     "prosemirror-schema-basic": "^1.2.3",
     "prosemirror-schema-list": "^1.0.0",
-    "prosemirror-state": "^1.0.0"
+    "prosemirror-state": "^1.0.0",
+    "prosemirror-transform": "^1.10.0"
   },
   "devDependencies": {
     "@prosemirror/buildhelper": "^0.1.5",
