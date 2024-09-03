@@ -25,24 +25,23 @@ const META_EPHEMERAL = "meta_ephemeral";
 class Authority {
   doc: any;
   steps: any[];
-  stepClientIDs: number[];
+  step_client_ids: number[];
   on_new_steps: any[];
 
   constructor(doc) {
     this.doc = doc;
     this.steps = [];
-    this.stepClientIDs = [];
+    this.step_client_ids = [];
     this.on_new_steps = [];
   }
 
-  receive_steps(version, steps, clientID) {
+  receive_steps(version, steps, client_id) {
     if (version != this.steps.length) return;
-
     // Apply and accumulate new steps
     steps.forEach((step) => {
       this.doc = step.apply(this.doc).doc;
       this.steps.push(step);
-      this.stepClientIDs.push(clientID);
+      this.step_client_ids.push(client_id);
     });
     // Signal listeners
     this.on_new_steps.forEach(function (f) {
@@ -53,7 +52,7 @@ class Authority {
   steps_since(version) {
     return {
       steps: this.steps.slice(version),
-      clientIDs: this.stepClientIDs.slice(version),
+      clientIDs: this.step_client_ids.slice(version),
     };
   }
 }
@@ -124,18 +123,15 @@ function get_virtual_list_window(view, doc: Node, mapping, buffer = 20) {
   frag.forEach((node, offset, idx) => {
     data.push({ node, offset, idx });
   });
-  console.log("FRAG", data, mapping);
   function pred(datum: { node: Node; offset: number; idx: number }, i) {
     let { node, offset, idx } = datum;
     let dom = view.nodeDOM(mapping.map(offset));
     let res = { success: false, cmp: 0 };
     if (dom) {
-      console.log(dom, datum);
       let cmp = is_dom_in_viewport(dom);
       if (cmp === 0) res.success = true;
       else res.cmp = cmp;
     }
-    console.log("dom", dom, datum, offset, res);
     return res;
   }
   let in_window = binary_search(data, pred);
@@ -147,7 +143,6 @@ function get_virtual_list_window(view, doc: Node, mapping, buffer = 20) {
       data,
     };
   }
-  console.log("WINDOW", in_window, res);
   return res;
 }
 
@@ -169,7 +164,6 @@ class SyncSimulator {
     this.connected = false;
     this.on_new_steps = function () {
       if (this.connected) {
-        console.log("ON_NEW_STEPS");
         let newData = authority.steps_since(getVersion(view.state));
         view.dispatch(
           receiveTransaction(view.state, newData.steps, newData.clientIDs)
@@ -177,6 +171,10 @@ class SyncSimulator {
       }
     };
     this.on_new_steps = this.on_new_steps.bind(this);
+  }
+  start() {
+    this.view.state.doc = authority.doc;
+    this.connect();
   }
   connect() {
     this.connected = true;
@@ -204,7 +202,6 @@ function setup_editor(root) {
   let top_level_node_plugin = new Plugin({
     state: {
       init(_, { doc }) {
-        console.log(doc);
         let top_level_node_decs: Decoration[] = [];
         let set = DecorationSet.create(doc, top_level_node_decs);
         setTimeout(() => {
@@ -219,27 +216,23 @@ function setup_editor(root) {
           }, 0);
           return set;
         }
-        console.group("APPLY", tr.doc, set, tr);
         let { start, end, data } = get_virtual_list_window(
           view,
           tr.doc,
           tr.mapping.invert()
         );
         let top_level_node_decs: Decoration[] = [];
-        // let new_set = set.map(tr.mapping, tr.doc);
         let new_set = DecorationSet.empty;
         for (let i = start; i < end; i++) {
           let count = i;
           let { node, offset } = data[i];
           let dec = Decoration.node(offset, offset + node.nodeSize, {
-            style: "background: yellow",
+            // style: "background: yellow",
             class: "top_level_dec",
             "data-top_level_dec_count": count + "",
           });
-          console.log(i, offset, node, node.nodeSize);
           top_level_node_decs.push(dec);
         }
-        console.groupEnd();
         return new_set.add(tr.doc, top_level_node_decs);
       },
     },
@@ -262,13 +255,13 @@ function setup_editor(root) {
 
   let view = new EditorView(editor, {
     state: EditorState.create({
-      doc: authority.doc,
+      doc: schema.nodes.doc.createAndFill() as Node,
       plugins: [
         ...exampleSetup({
           schema: schema,
         }),
         top_level_node_plugin,
-        collab({ version: authority.steps.length }),
+        collab({ version: 0 }),
       ],
     }),
     dispatchTransaction(transaction) {
@@ -279,7 +272,7 @@ function setup_editor(root) {
   });
 
   let sync_simulator = new SyncSimulator(view);
-  sync_simulator.connect();
+  sync_simulator.start();
   let sync_simulator_container = document.createElement("div");
   controls.appendChild(sync_simulator_container);
   let connection_button = document.createElement("button");
@@ -377,17 +370,43 @@ function create_lorem_button(view, controls_container, n: number) {
 
 let views = [setup_editor("#root"), setup_editor("#root")];
 
+let update_top_level_node_decs_on_scroll = true;
 window.addEventListener("scroll", (e) => {
-  views.forEach(update_top_level_node_decs);
+  if (update_top_level_node_decs_on_scroll)
+    views.forEach(update_top_level_node_decs);
 });
 
 /* setup page controls */
 {
   let page_controls = document.getElementById("page_controls");
-  let add_editor_button = document.createElement("button");
-  add_editor_button.innerHTML = "Add Editor";
-  add_editor_button.addEventListener("click", (e) => {
-    views.push(setup_editor("#root"));
-  });
-  page_controls?.appendChild(add_editor_button);
+
+  /* add editor button */
+  {
+    let add_editor_button = document.createElement("button");
+    add_editor_button.innerHTML = "Add Editor";
+    add_editor_button.addEventListener("click", (e) => {
+      views.push(setup_editor("#root"));
+    });
+    page_controls?.appendChild(add_editor_button);
+  }
+
+  /* update_top_level_node_decs_on_scroll */
+  {
+    let label_base = "Update Decoration Virtual Window on scroll: ";
+    let update_top_level_node_decs_on_scroll_button =
+      document.createElement("button");
+    update_top_level_node_decs_on_scroll_button.innerText = label_base + "On";
+    update_top_level_node_decs_on_scroll_button.addEventListener(
+      "click",
+      (e) => {
+        update_top_level_node_decs_on_scroll =
+          !update_top_level_node_decs_on_scroll;
+        update_top_level_node_decs_on_scroll_button.innerText =
+          update_top_level_node_decs_on_scroll
+            ? label_base + "On"
+            : label_base + "Off";
+      }
+    );
+    page_controls?.appendChild(update_top_level_node_decs_on_scroll_button);
+  }
 }
