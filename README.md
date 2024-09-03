@@ -7,3 +7,5 @@ We implement:
 - decorations for styling ranges
 - virtualizing a list of node decorations
 - simple, in-process sync simulation
+
+`vite dev` will serve this up at `http://localhost:5173/prosemirror_experiments/`
