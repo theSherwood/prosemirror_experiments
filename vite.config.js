@@ -1,5 +1,8 @@
-import { defineConfig } from 'vite';
+import { defineConfig } from "vite";
 
 export default defineConfig({
-  // Your Vite configuration here
+  build: {
+    // We do this for GitHub pages
+    outDir: "docs",
+  },
 });
