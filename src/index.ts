@@ -23,14 +23,19 @@ const META_TOP_LEVEL_DEC = "meta_top_level_dec";
 const META_EPHEMERAL = "meta_ephemeral";
 
 class Authority {
+  doc: any;
+  steps: any[];
+  stepClientIDs: number[];
+  on_new_steps: any[];
+
   constructor(doc) {
     this.doc = doc;
     this.steps = [];
     this.stepClientIDs = [];
-    this.onNewSteps = [];
+    this.on_new_steps = [];
   }
 
-  receiveSteps(version, steps, clientID) {
+  receive_steps(version, steps, clientID) {
     if (version != this.steps.length) return;
 
     // Apply and accumulate new steps
@@ -40,12 +45,12 @@ class Authority {
       this.stepClientIDs.push(clientID);
     });
     // Signal listeners
-    this.onNewSteps.forEach(function (f) {
+    this.on_new_steps.forEach(function (f) {
       f();
     });
   }
 
-  stepsSince(version) {
+  steps_since(version) {
     return {
       steps: this.steps.slice(version),
       clientIDs: this.stepClientIDs.slice(version),
@@ -155,6 +160,46 @@ function update_top_level_node_decs(view) {
   dispatch(tx);
 }
 
+class SyncSimulator {
+  view: EditorView;
+  connected: boolean;
+  on_new_steps: any;
+  constructor(view) {
+    this.view = view;
+    this.connected = false;
+    this.on_new_steps = function () {
+      if (this.connected) {
+        console.log("ON_NEW_STEPS");
+        let newData = authority.steps_since(getVersion(view.state));
+        view.dispatch(
+          receiveTransaction(view.state, newData.steps, newData.clientIDs)
+        );
+      }
+    };
+    this.on_new_steps = this.on_new_steps.bind(this);
+  }
+  connect() {
+    this.connected = true;
+    this.on_new_steps();
+    authority.on_new_steps.push(this.on_new_steps);
+    this.send_steps(this.view.state);
+  }
+  disconnect() {
+    this.connected = false;
+  }
+  send_steps(state) {
+    if (this.connected) {
+      let sendable = sendableSteps(state);
+      if (sendable)
+        authority.receive_steps(
+          sendable.version,
+          sendable.steps,
+          sendable.clientID
+        );
+    }
+  }
+}
+
 function setup_editor(root) {
   let top_level_node_plugin = new Plugin({
     state: {
@@ -229,31 +274,35 @@ function setup_editor(root) {
     dispatchTransaction(transaction) {
       let newState = view.state.apply(transaction);
       view.updateState(newState);
-      if (!transaction.getMeta(META_EPHEMERAL)) {
-        let sendable = sendableSteps(newState);
-        if (sendable)
-          authority.receiveSteps(
-            sendable.version,
-            sendable.steps,
-            sendable.clientID
-          );
-      }
+      sync_simulator.send_steps(newState);
     },
   });
 
-  authority.onNewSteps.push(function () {
-    let newData = authority.stepsSince(getVersion(view.state));
-    view.dispatch(
-      receiveTransaction(view.state, newData.steps, newData.clientIDs)
-    );
+  let sync_simulator = new SyncSimulator(view);
+  sync_simulator.connect();
+  let sync_simulator_container = document.createElement("div");
+  controls.appendChild(sync_simulator_container);
+  let connection_button = document.createElement("button");
+  connection_button.innerText = sync_simulator.connected
+    ? "Disconnect"
+    : "Connect";
+  connection_button.addEventListener("click", (e) => {
+    if (sync_simulator.connected) sync_simulator.disconnect();
+    else sync_simulator.connect();
+    connection_button.innerText = sync_simulator.connected
+      ? "Disconnect"
+      : "Connect";
   });
+  sync_simulator_container.appendChild(connection_button);
 
-  create_lorem_button(view, controls, 1);
-  create_lorem_button(view, controls, 5);
-  create_lorem_button(view, controls, 10);
-  create_lorem_button(view, controls, 50);
-  create_lorem_button(view, controls, 1000);
-  create_lorem_button(view, controls, 10000);
+  let lorem_buttons_container = document.createElement("div");
+  controls.appendChild(lorem_buttons_container);
+  create_lorem_button(view, lorem_buttons_container, 1);
+  create_lorem_button(view, lorem_buttons_container, 5);
+  create_lorem_button(view, lorem_buttons_container, 10);
+  create_lorem_button(view, lorem_buttons_container, 50);
+  create_lorem_button(view, lorem_buttons_container, 1000);
+  create_lorem_button(view, lorem_buttons_container, 10000);
 
   return view;
 }
