@@ -1,15 +1,60 @@
 import { EditorState, Plugin } from "prosemirror-state";
 import { EditorView, Decoration, DecorationSet } from "prosemirror-view";
 import { Schema, Node, Fragment, DOMParser } from "prosemirror-model";
-import { schema } from "prosemirror-schema-basic";
+import { schema as base_schema } from "prosemirror-schema-basic";
 import { addListNodes } from "prosemirror-schema-list";
+import {
+  collab,
+  sendableSteps,
+  receiveTransaction,
+  getVersion,
+} from "prosemirror-collab";
 import { exampleSetup } from "./basic_setup/index";
 import { lorem } from "./lorem";
 
-/**
- * TODO
- * - collaboration support
- */
+// Mix the nodes from prosemirror-schema-list into the basic schema to
+// create a schema with list support.
+const schema = new Schema({
+  nodes: addListNodes(base_schema.spec.nodes, "paragraph block*", "block"),
+  marks: base_schema.spec.marks,
+});
+
+const META_TOP_LEVEL_DEC = "meta_top_level_dec";
+const META_EPHEMERAL = "meta_ephemeral";
+
+class Authority {
+  constructor(doc) {
+    this.doc = doc;
+    this.steps = [];
+    this.stepClientIDs = [];
+    this.onNewSteps = [];
+  }
+
+  receiveSteps(version, steps, clientID) {
+    if (version != this.steps.length) return;
+
+    // Apply and accumulate new steps
+    steps.forEach((step) => {
+      this.doc = step.apply(this.doc).doc;
+      this.steps.push(step);
+      this.stepClientIDs.push(clientID);
+    });
+    // Signal listeners
+    this.onNewSteps.forEach(function (f) {
+      f();
+    });
+  }
+
+  stepsSince(version) {
+    return {
+      steps: this.steps.slice(version),
+      clientIDs: this.stepClientIDs.slice(version),
+    };
+  }
+}
+const authority = new Authority(
+  DOMParser.fromSchema(schema).parse(document.querySelector("#content"))
+);
 
 // Get the first stylesheet in the document
 const sheet = document.styleSheets[0];
@@ -26,13 +71,6 @@ function is_dom_in_viewport(el) {
     return 1;
   return 0;
 }
-
-// Mix the nodes from prosemirror-schema-list into the basic schema to
-// create a schema with list support.
-const my_schema = new Schema({
-  nodes: addListNodes(schema.spec.nodes, "paragraph block*", "block"),
-  marks: schema.spec.marks,
-});
 
 function binary_search(
   arr,
@@ -108,12 +146,11 @@ function get_virtual_list_window(view, doc: Node, mapping, buffer = 20) {
   return res;
 }
 
-const TOP_LEVEL_DEC_META = "top_level_dec";
-
 function update_top_level_node_decs(view) {
   let { state, dispatch } = view;
   let tx = state.tr;
-  tx.setMeta(TOP_LEVEL_DEC_META, true);
+  tx.setMeta(META_TOP_LEVEL_DEC, true);
+  tx.setMeta(META_EPHEMERAL, true);
   tx.setMeta("addToHistory", false);
   dispatch(tx);
 }
@@ -131,7 +168,7 @@ function setup_editor(root) {
         return set;
       },
       apply(tr, set) {
-        if (!tr.getMeta(TOP_LEVEL_DEC_META)) {
+        if (!tr.getMeta(META_TOP_LEVEL_DEC)) {
           setTimeout(() => {
             update_top_level_node_decs(view);
           }, 0);
@@ -180,14 +217,35 @@ function setup_editor(root) {
 
   let view = new EditorView(editor, {
     state: EditorState.create({
-      doc: DOMParser.fromSchema(my_schema).parse(
-        document.querySelector("#content")
-      ),
-      plugins: exampleSetup({
-        schema: my_schema,
-        plugins: [top_level_node_plugin],
-      }),
+      doc: authority.doc,
+      plugins: [
+        ...exampleSetup({
+          schema: schema,
+        }),
+        top_level_node_plugin,
+        collab({ version: authority.steps.length }),
+      ],
     }),
+    dispatchTransaction(transaction) {
+      let newState = view.state.apply(transaction);
+      view.updateState(newState);
+      if (!transaction.getMeta(META_EPHEMERAL)) {
+        let sendable = sendableSteps(newState);
+        if (sendable)
+          authority.receiveSteps(
+            sendable.version,
+            sendable.steps,
+            sendable.clientID
+          );
+      }
+    },
+  });
+
+  authority.onNewSteps.push(function () {
+    let newData = authority.stepsSince(getVersion(view.state));
+    view.dispatch(
+      receiveTransaction(view.state, newData.steps, newData.clientIDs)
+    );
   });
 
   create_lorem_button(view, controls, 1);
@@ -247,7 +305,7 @@ function insert_text_at_end(view, text) {
 function text_to_paragraph_nodes(text: string) {
   let para_strings = text.split(/\n{2,}/);
   let paras = para_strings.map((p) =>
-    my_schema.nodes.paragraph.create(null, my_schema.text(text))
+    schema.nodes.paragraph.create(null, schema.text(text))
   );
   return paras;
 }
@@ -273,3 +331,14 @@ let views = [setup_editor("#root"), setup_editor("#root")];
 window.addEventListener("scroll", (e) => {
   views.forEach(update_top_level_node_decs);
 });
+
+/* setup page controls */
+{
+  let page_controls = document.getElementById("page_controls");
+  let add_editor_button = document.createElement("button");
+  add_editor_button.innerHTML = "Add Editor";
+  add_editor_button.addEventListener("click", (e) => {
+    views.push(setup_editor("#root"));
+  });
+  page_controls?.appendChild(add_editor_button);
+}

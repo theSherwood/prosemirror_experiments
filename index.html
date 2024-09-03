@@ -1,36 +1,40 @@
 <!DOCTYPE html>
 <html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta http-equiv="X-UA-Compatible" content="IE=edge">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <link rel="stylesheet" href="/style/style.css">
+  <head>
+    <meta charset="UTF-8" />
+    <meta http-equiv="X-UA-Compatible" content="IE=edge" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <link rel="stylesheet" href="/style/style.css" />
     <title>Prosemirror Experiments</title>
-</head>
-<body>
-  <header>
-    <h1>Welcome to My Website</h1>
-  </header>
-  <div id="root"></div>
+  </head>
+  <body>
+    <header>
+      <h1>Welcome to My Website</h1>
+    </header>
+    <div id="page_controls"></div>
+    <hr />
+    <div id="root"></div>
 
-  <div style="display: none" id="content">
-    <h3>Hello ProseMirror</h3>
-
-    <p>This is editable text. You can focus it and start typing.</p>
-
-    <p>To apply styling, you can select a piece of text and manipulate
-    its styling from the menu. The basic schema
-    supports <em>emphasis</em>, <strong>strong
-    text</strong>, <a href="http://marijnhaverbeke.nl/blog">links</a>, <code>code
-    font</code>, and <img src="/img/smiley.png"> images.</p>
-
-    <p>Block-level structure can be manipulated with key bindings (try
-    ctrl-shift-2 to create a level 2 heading, or enter in an empty
-    textblock to exit the parent block), or through the menu.</p>
-
-    <p>Try using the “list” item in the menu to wrap this paragraph in
-    a numbered list.</p>
-  </div>
-  <script src="/src/index.ts" type="module"></script>
-</body>
+    <div style="display: none" id="content">
+      <h3>Hello ProseMirror</h3>
+      <p>This is editable text. You can focus it and start typing.</p>
+      <p>
+        To apply styling, you can select a piece of text and manipulate its
+        styling from the menu. The basic schema supports <em>emphasis</em>,
+        <strong>strong text</strong>,
+        <a href="http://marijnhaverbeke.nl/blog">links</a>,
+        <code>code font</code>, and <img src="/img/smiley.png" /> images.
+      </p>
+      <p>
+        Block-level structure can be manipulated with key bindings (try
+        ctrl-shift-2 to create a level 2 heading, or enter in an empty textblock
+        to exit the parent block), or through the menu.
+      </p>
+      <p>
+        Try using the “list” item in the menu to wrap this paragraph in a
+        numbered list.
+      </p>
+    </div>
+    <script src="/src/index.ts" type="module"></script>
+  </body>
 </html>
